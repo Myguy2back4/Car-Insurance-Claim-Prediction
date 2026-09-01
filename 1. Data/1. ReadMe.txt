@@ -1,0 +1,45 @@
+README.txt
+Project: Car Insurance Claim Prediction
+Student: Wenslo Dort
+Course: Statistical Learning
+Date: 4/24/2025
+
+------------------------------
+ABOUT THE DATA
+------------------------------
+The dataset used in this project contains information on car insurance policies, including vehicle features, safety equipment, and policyholder characteristics. The goal is to predict whether a policyholder will file a claim based on these features.
+
+The dataset includes both numerical and binary variables. The target variable is `is_claim`, indicating whether a claim was filed (1) or not (0). Approximately 6% of the policyholders in the dataset filed a claim, making it highly imbalanced.
+
+------------------------------
+DATA DICTIONARY
+------------------------------
+A separate file named `data_dictionary.csv` is included, which describes each variable used in the final analysis, along with its data type and a short explanation.
+
+------------------------------
+DATA CLEANING & PREP
+------------------------------
+- Removed variables that were redundant, sparse, or had low variance.
+- Converted binary categorical variables into 0/1 numeric format.
+- Ensured all selected variables were numeric or appropriately encoded for modeling.
+- Handled any `NaN` values by re-encoding or starting over with cleaner variable selection.
+
+------------------------------
+FILES INCLUDED
+------------------------------
+- Car_Insurance_Claim_Prediction.Rmd
+- Car_Insurance_Claim_Prediction.html
+- data_dictionary.csv
+
+------------------------------
+NOTES
+------------------------------
+Due to time constraints, boosting models (e.g., XGBoost) and SVM were not implemented. All included models were evaluated with special attention to threshold tuning and class imbalance.
+
+------------------------------
+LINKS
+------------------------------
+- https://www.kaggle.com/datasets/ifteshanajnin/carinsuranceclaimprediction-classification
+- https://www.analyticsvidhya.com/datahack/contest/dataverse/
+
+
