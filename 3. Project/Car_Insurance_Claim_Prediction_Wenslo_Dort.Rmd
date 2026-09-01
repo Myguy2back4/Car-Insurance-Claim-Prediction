@@ -1,0 +1,848 @@
+---
+title: "Car Insurance Claim Prediction"
+author: "Wenslo Dort"
+output: html_notebook
+---
+```{r, message=FALSE, echo = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(kableExtra)
+library(corrplot)
+library(ggcorrplot)
+library(forcats)
+library(caret)
+library(glmnet)          
+library(randomForest)
+library(rpart)           
+library(rpart.plot)      
+library(e1071)           
+library(gbm)             
+library(pROC)  
+library(dplyr)
+library(MASS)
+library(reshape2)
+```
+
+<center> <h1>**Summary**</h1> </center>
+This project aimed to predict whether a policyholder would file an insurance claim using a classification approach. After preparing and cleaning the data, I applied a variety of models, including logistic regression, LASSO, Ridge regression, and Random Forests. To address the strong class imbalance in the dataset, I performed threshold tuning and evaluated models using metrics beyond accuracy, including recall, F1 score, balanced accuracy, and AUC.
+<br>
+
+Logistic regression with backward stepwise selection and LASSO performed reasonably well when evaluated at optimized thresholds, showing modest improvements in identifying claimants. Ridge regression offered similar results, while Random Forest struggled with detecting the minority class, despite high overall accuracy. Although Boosting was considered for future work, it was not implemented due to time constraints. The project highlights the importance of appropriate metric selection, feature analysis, and threshold adjustment when dealing with imbalanced classification problems.
+
+
+<center> <h1>**Purpose**</h1> </center>
+The purpose of this project is to predict whether a car insurance policyholder will file a claim. Insurance companies rely on this type of prediction to assess customer risk, manage costs, and design pricing strategies. Accurately identifying which policyholders are more likely to file a claim allows insurers to take proactive steps, such as adjusting policy terms or offering discounts to low-risk drivers. This analysis explores how well statistical learning methods can classify claim behavior based on vehicle characteristics, policyholder demographics, and safety features. It also highlights the challenges with modeling imbalanced data and underlines the importance of choosing evaluation metrics suited to real-world applications.
+<br>
+
+Questions that this project aim to answer are:
+
+- What are the most important features that influence the likelihood of a policyholder filing a claim?
+- How do different modeling techniques compare in their ability to classify claim vs. no-claim policyholders?
+<br>
+
+<center> <h1>**Data**</h1> </center>
+<center>![](pick.png)</center>
+<center>![](pickle2.png)</center>
+<br>
+This insurance claim data set is from [Kaggle](https://www.kaggle.com/datasets/ifteshanajnin/carinsuranceclaimprediction-classification), but it seems that it was taken from [Analytics Vidhya](https://www.analyticsvidhya.com/datahack/contest/dataverse/), India's largest data science community platform. This was used for a hackathon. We have a dimension of 58592 observations of  44 variables. There are too many variables to consider. Mostly have to use a correlation chart and content knowledge to help me determine which variables are the most important that could accurately determine whether a policyholder will file an insurance claim within the next six months.
+
+\* Note: The "segment" variable in the dataset is used to classify vehicles based on characteristics such as size, body type, and market positioning. Segments such as A, B1, B2, C1, C2, and Utility represent different vehicle classes defined by factors like car size, price, comfort level, and performance.
+
+- Segment A (Mini cars): Small-sized vehicles primarily designed for city commuting, fuel efficiency, and ease of parking
+- Segment B (Hatchback): Slightly larger than mini cars.
+  - B1: Lower sub-segment—basic subcompact models
+  - B2: Upper sub-segment—higher-end, more feature-rich subcompact models
+- Segment C (Medium/compact cars): These family-oriented vehicles provide enhanced comfort, space, and features, distinguishing them from B-segment cars.
+  - C1: Basic compact car variants.
+  - C2: Premium compact variants offering enhanced features, safety, and comfort.
+- Utility Segment: Includes SUVs, crossovers, pickup trucks, or utility-focused models designed for versatility and off-road capability.
+
+```{r, message=FALSE, echo = FALSE}
+train <- read.csv("3. car_insurance")
+
+```
+<br>
+
+We can see below that **policy_id**, **area_cluster**, **segment**, **model**, **fuel_type**, **max_torque**, **max_power**, **engine_type**, **is_esc**, **is_adjustable_steering**, **is_tpms**, **is_parking_sensors**, **rear_brakes_type**, **transmission_type**, **steering_type**, **is_front_fog_lights**, **is_rear_window_wiper**, **is_rear_window_washer**, **is_rear_window_defogger**, **is_brake_assist**, **is_power_door_locks**, **is_central_locking**, **is_power_steering**, **is_driver_seat_height_adjustable**, **is_day_night_rear_view_mirror**, **is_ecw**, and **is_speed_alert** are character variables. 
+
+<br>
+We can see below that there is no missing values for each features. Now let's see the structure of the data.
+```{r, message=FALSE, echo = FALSE}
+# Checking missing values
+missing_values <- colSums(is.na(train))
+#print(missing_values)
+
+missing_df <- data.frame(
+  Variable = names(missing_values),
+  Missing_Values = as.integer(missing_values)
+) %>% arrange(desc(Missing_Values))
+
+# Display table
+missing_df %>%
+  knitr::kable(caption = "Missing Values in Training Dataset") 
+
+```
+
+
+<center> <h1>**Summary Statistics**</h1> </center>
+
+Below is the summary statistics for the numerical variables reveal key characteristics of the vehicles, policyholders, and environments in the dataset. Most policyholders own relatively new cars, as indicated by the low median value of **age_of_car** (0.06) and the low mean value of 0.069, with a minimum of 0 and a maximum of 1 (likely normalized). The **policy_tenure** variable has a median of 0.57 and a mean of 0.61, suggesting that many customers are within their first year of holding a policy. Similarly, the **age_of_policyholder** shows a median around 0.45 and a mean of 0.47, indicating that most policyholders are likely in their late 20s to early 40s, assuming a normalization over an age range from 18 to 100.
+<br>
+Most cars are compact or midsized for vehicle attributes, as shown by average dimensions: a **length** of around 3850 mm, **width** of about 1672 mm, **height** near 1530 mm, and **gross_weight** averaging 1385 kg. These values are typical for small city or hatchback vehicles, which aligns with the average engine **displacement** of 1162 cc and standard cylinder (**cylinder**) counts of 3 or 4. Most vehicles have 2 airbags (**airbags**), 5-speed gearboxes (**gear_box**), and an NCAP safety rating of around 2–3. **ncap_rating** are centered around lower values, raising potential concerns for risk exposure. The **population_density** has a broad range (min: 290, max: 73,430), but the median is just 8,794, indicating a concentration of policyholders in semi-urban to urban areas rather than highly dense metro zones, which makes sense **turning_radius** centers around a mean of 4.85 meters, with values ranging between 4.5 and 5.2 meters, which is typical for compact cars and essential for maneuverability in tight city streets. These summary statistics reflect that a customer base prioritizes affordability and practicality, an important context for developing predictive models around insurance claims.
+
+
+```{r, message=FALSE, echo = FALSE}
+# continuous + discrete variables
+numerical_vars <- c("policy_tenure", "age_of_car", "age_of_policyholder",
+                    "population_density", "turning_radius", "length", 
+                    "width", "height", "gross_weight", "displacement", 
+                    "airbags", "cylinder", "gear_box", "ncap_rating")
+
+# Generate summary statistics dataframe
+summary_df <- train[numerical_vars] %>% 
+  summary() %>% 
+  as.data.frame.matrix() %>% 
+  rownames_to_column("Statistic")
+
+colnames(summary_df)[1] <- "Statistic"
+
+summary_df$Statistic <- c("Minimum", "1st Quartile", "Median", 
+                          "Mean", "3rd Quartile", "Maximum")
+
+summary_df %>%
+  dplyr::select(-Statistic) %>%  # Use dplyr's select explicitly
+  kbl(caption = "Summary Statistics for Numerical Variables") %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+
+```
+
+The distribution of **policy_tenure** is bimodal, featuring one significant peak around 0, which represents newer customers, and another peak around 1, indicating long-term policyholders. This suggests that the dataset includes both new and loyal customers, who may exhibit different behaviors when filing claims. The histogram of **age_of_car** is significantly right-skewed, indicating that the majority of vehicles are new. The claim risk may be lower due to the presence of newer technologies and features, as very few vehicles are older than 0.25 on the normalized scale. Additionally, the **age_of_policyholder** variable exhibits a right-skewed distribution, with the majority of policyholders falling within the range of 0.3 to 0.5 on the normalized scale, which is likely indicative of younger to middle-aged individuals. 
+<br>
+
+
+```{r, message=FALSE, echo = FALSE}
+real_num_vars <- c("policy_tenure", "age_of_car", "age_of_policyholder", "population_density") 
+for (var in real_num_vars){
+  ggplot(train, aes_string(x=var)) +
+    geom_histogram(fill="yellow", color="black") +
+    labs(title=paste("Histogram of", var), x=var, y="Frequency") +
+    theme_minimal() -> hist_plot
+  
+  print(hist_plot)
+}
+```
+<br>
+The histogram of **population_density** displays a multimodal and right-skewed distribution, with distinct peaks below 10,000 and additional spikes in the ranges of 20,000–40,000 and 70,000. This indicates that vehicles are insured across a variety of environments, from rural areas to dense urban centers. Notably, higher population density often correlates with increased traffic and a greater likelihood of insurance claims. Below, the bar chart for **population_density** show that majority of the policyholders are located in urban areas consisting of 8,784.
+
+```{r, message=FALSE, echo = FALSE}
+bar <- ggplot(train, aes(x = factor(population_density), fill = factor(population_density))) +
+  geom_bar() +
+  labs(
+    title = "Bar Chart for population_density",
+    x = "population_density",
+    y = "Count"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "none"  # Add this line to remove the legend
+  )
+
+print(bar)
+
+```
+<br>
+The bar charts depicting the discrete variables offer valuable insights into the physical and safety-related features of the vehicles in the dataset. Regarding **turning_radius**, the most commonly observed values are 4.6 m, 4.8 m, and 5.2 m, indicating a blend of compact and moderately maneuverable vehicles. The **length**, **width**, and **height** variables show distinct and diverse groupings, such as 3445 mm, 3845 mm, and 4300 mm for length; 1515 mm, 1735 mm, and 1790 mm for width; and 1475 mm, 1530 mm, and 1635 mm for height. These sets indicate a rich diversity in vehicle body types, likely ranging from hatchbacks to sedans and compact SUVs.
+
+For **gross_weight**, the dataset shows high frequencies around 1385 kg and 1720 kg, while **displacement** is centered on 1197 cc and 1493 cc. These values reflect the presence of lightweight, fuel-efficient models and heavier vehicles with more powerful engines. Notably, a distinct combination of vehicles exhibit a **length** of 4300 mm, **width** of 1790 mm, **height** of 1635 mm, **gross_weight** of 1720 kg, **displacement** of 1493 cc, and 6 airbags. This design strongly suggests that subcompact SUVs are designed for families or individuals seeking enhanced safety, internal space, and a slightly elevated ride height without the bulk of full-size SUVs.
+
+Other variables like **airbags**, **cylinder**, and **gear_box** further reveal vehicle specifications. Most vehicles have 2 or 6 airbags, indicating a balanced focus on the owner's safety. Majority of the cars have 4 cylinders, which is standard, and a 5 gearbox is the most common transmission type. The **ncap_rating** variable shows many vehicles scoring 0, 2, or 3, suggesting that while some cars meet reasonable safety standards, there is a clear and urgent need for improvement in crash protection and safety assurance across the dataset.
+```{r, message=FALSE, echo = FALSE}
+discrete_vars <- c("turning_radius", "length" ,"width", "height", "gross_weight", "displacement", "airbags", "cylinder", "gear_box", "ncap_rating")
+
+train[discrete_vars] <- lapply(train[discrete_vars], as.factor)
+for (var in discrete_vars) {
+  bar <- ggplot(train, aes_string(x = var)) +
+    geom_bar(aes_string(fill = var)) +
+    labs(
+      title = paste("Bar Chart for", var), x = var, y = "Count"
+    ) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"  # Add this line to remove the legend
+    )
+
+  print(bar)
+}
+
+
+```
+
+
+
+<br>
+For the **area_cluster**, the highest frequency occurs in area cluster C8, indicating it has the highest concentration of policyholders. C2, C5, and C3 follow it. Other area clusters have relatively lower frequencies; C15 through C22, C4, and C6 are the lowest. For the **make** variable, Manufacturer 1 is the biggest producer of cars, producing over 38,000 cars; this suggests that consumers prefer Manufacturer 1, likely due to affordability and reliability. Manufacturer 3 is the second largest car producer, with nearly 15,000 vehicles, while manufacturers 2, 4, and 5 each produced under 2,500 cars — possibly reflecting lower popularity, higher prices, or niche appeal.
+<br>
+<br>
+The bar chart for **model** shows that models M1, M4, and M6 are the most common choices, while M3, M9, M5, M10, and M2 are the least common. The **fuel_type** bar chart illustrates the distribution of cars by fuel type: Petrol holds a slight edge, closely followed by CNG and Diesel, highlighting diverse consumer preferences. For **engine_type**, the most frequent are the F8D Petrol Engine, 1.5 L U2 CRDi, and K Series Dual Jet. These popular engine types suggest a balance between fuel economy, maintenance costs, and performance.
+Regarding **rear_brakes_type**, Drum brakes are significantly more common than Disc brakes. While drum brakes are more economical and durable, disc brakes provide better performance and are more frequently located in higher-end or sportier models. For **steering_type**, Power steering dominates, followed by Electric, while Manual steering is rarely used. This may reflect both technological advancement and consumer preference for ease of driving.
+<br>
+<br>
+The **transmission_type** distribution shows that Manual transmissions are significantly more common than Automatic ones, indicating that either manual cars are more affordable or preferred by the target market. In the **segment** variable, B2 and A are the most common, followed by C2, suggesting a concentration of vehicles in compact and subcompact categories — often popular for urban use. The lower frequencies in segments like Utility, B1, and C1 suggest these are less popular, possibly due to pricing.
+<br>
+<br>
+Regarding **max_power**, the most frequent outputs are 88.50bhp@6000rpm, 40.36bhp@6000rpm, and 113.45bhp@4000rpm, making up nearly 80% of the dataset. These values point toward vehicles with moderate to high power, likely reflecting consumer preferences for balanced performance and efficiency. Similarly, for ** max_torque **, the most common values are 113Nm@4400rpm, 60Nm@3500rpm, and 250Nm@2750rpm. These levels of torque are consistent with small to mid-sized engines suitable for everyday driving conditions.
+Lastly, the mixture of specific characteristics—4300 mm length, 1790 mm width, 1635 mm height, 1720 kg gross weight, 1493 cc displacement, and 6 airbags—aligns with typical subcompact SUVs. These vehicles offer safety and space, making them ideal for families and urban drivers. Their popularity in the dataset indicates a substantial market segment that values modern features without entering the whole SUV class.
+
+```{r, message=FALSE, echo = FALSE}
+
+# Nominal + ordinal variables
+categorical_vars <- c("area_cluster", "make", "model", "fuel_type", 
+                      "engine_type", "rear_brakes_type", "transmission_type", 
+                      "steering_type", "segment", "max_power", "max_torque")
+
+# Frequency table for each categorical variable
+for (var in categorical_vars) {
+  train %>% 
+    count(.data[[var]]) %>% 
+    arrange(desc(n)) %>% 
+    rename(Category = 1, Frequency = n) %>% 
+    head(10) %>%  # displaying top 10 categories for readability
+    kbl(caption = paste(var)) %>%
+    kable_classic(full_width = FALSE, html_font = "Cambria") %>%
+    print()
+}
+
+```
+
+
+
+```{r, message=FALSE, echo = FALSE}
+# Frequency table for each categorical variable
+for (var in categorical_vars){
+  bar <- ggplot(train, aes_string(x = var, fill = var)) +
+    geom_bar() +
+    labs(title = paste("Bar Chart for", var), x = var, y = "Count") +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1),
+          legend.position = "none"  # Add this line to remove the legend
+    )
+  
+  print(bar)
+}
+```
+<br>
+
+The table below summarizes the frequency of binary (Yes/No) variables, indicating the presence or absence of specific car features. These frequencies assist in understanding common practices, optional features, and consumer preferences regarding car safety and comfort.The variable **"is_claim"** shows a very low frequency, with only 6.4% responding "Yes," confirming that claims are relatively rare in this dataset.Both Speed alerts  **(is_speed_alert)** and Power steering **(is_power_steering)** are highly general, with nearly all cars equipped, signifying it as a common feature in the dataset. 
+<br>
+<br>
+Tyre pressure monitoring systems **(is_tpms)** and Electronic Stability Control **(is_esc)** operate at lower frequencies, possibly due to cost-saving measures or consumer choices based on budget constraints or necessity.
+```{r, message=FALSE, echo = FALSE}
+# Bar charts for each categorical variable
+binary_vars <- c("is_esc", "is_adjustable_steering", "is_tpms", 
+                 "is_parking_sensors", "is_parking_camera", "is_front_fog_lights", 
+                 "is_rear_window_wiper", "is_rear_window_washer", "is_rear_window_defogger",
+                 "is_brake_assist", "is_power_door_locks", "is_central_locking", 
+                 "is_power_steering", "is_driver_seat_height_adjustable", 
+                 "is_day_night_rear_view_mirror", "is_ecw", "is_speed_alert", 
+                 "is_claim") 
+
+binary_summary <- data.frame(
+  Yes = sapply(train[binary_vars], function(x) sum(x == "Yes" | x == 1)),
+  No = sapply(train[binary_vars], function(x) sum(x == "No" | x == 0))
+)
+
+
+
+binary_summary %>%
+  kbl(caption = "Summary of Binary Variables (Yes/No Counts)") %>%
+  kable_classic(full_width = FALSE, html_font = "Cambria")
+```
+
+```{r, message=FALSE, echo = FALSE}
+
+for (var in binary_vars){
+  bar <- ggplot(train, aes_string(x = var)) + 
+    geom_bar(aes_string(fill = var)) +        
+    labs(title = paste("Bar Chart for", var), x = var, y = "Count") +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"  # To remove the legend
+    )
+
+  print(bar)
+}
+```
+<br>
+
+Below the correlation heatmap shows that most numeric variables in the dataset are weakly related. The strongest relationship is between policy_tenure and age_of_car, but even that is weak (around 0.17). This means that customers with longer policies tend to have slightly older cars.
+
+There's almost no correlation between age_of_policyholder or make and whether someone files a claim (is_claim), suggesting that no single numeric variable is a strong predictor. Because of this, simple models like linear regression might not work well. Instead, we'll likely need to use more flexible models—like decision trees or bagging model—that can capture more complex patterns.
+```{r, message=FALSE, echo = FALSE}
+
+corrplot2 <- function(data,
+                      method = "pearson",
+                      sig.level = 0.05,
+                      order = "original",
+                      diag = FALSE,
+                      type = "upper",
+                      tl.srt = 90,
+                      number.font = 1,
+                      number.cex = 1,
+                      mar = c(0, 0, 0, 0)) {
+  
+  data_incomplete <- data
+  data <- data[complete.cases(data), ]
+  mat <- cor(data, method = method)
+  
+  cor.mtest <- function(mat, method) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat <- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+      for (j in (i + 1):n) {
+        tmp <- cor.test(mat[, i], mat[, j], method = method)
+        p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+      }
+    }
+    colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+    p.mat
+  }
+
+  p.mat <- cor.mtest(data, method = method)
+  col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+
+  corrplot(mat, method = "color", col = col(200),
+           number.font = number.font,
+           mar = mar, number.cex = number.cex,
+           type = type, order = order,
+           addCoef.col = "black",
+           tl.col = "black", tl.srt = tl.srt,
+           p.mat = p.mat, sig.level = sig.level, insig = "blank",
+           diag = diag)
+}
+
+# Use "eda_train" instead of "train"
+numeric_vars <- train[, c("policy_tenure", "age_of_car", "age_of_policyholder", 
+                              "population_density", "displacement", "cylinder", 
+                              "airbags", "ncap_rating", "is_claim")]
+
+numeric_vars <- data.frame(lapply(numeric_vars, function(x) as.numeric(as.character(x))))
+corrplot2(numeric_vars)
+
+
+
+
+```
+
+
+<br>
+
+After reviewing all the visualizations, summary tables, and correlation heatmaps, I have determined which variables to keep in my predictive model and which ones to remove. My goal is to keep variables that show enough variation, offer meaningful predictive importance, and make sense in the context of insurance claims, while cutting out those that are redundant, imbalanced, or lack insight.
+<br>
+
+I’ve decided to keep numerical features like **age_of_car**, **policy_tenure**, **population_density**, **airbags**, **displacement**, **cylinder**, and **ncap_rating**. Although the correlation heatmap shows no strong linear relationship with **is_claim**, these features capture important aspects of vehicle safety, usage, and risk exposure. For example, features like **airbags** and **ncap_rating** are directly tied to crash protection, which can influence claim likelihood—especially in models like decision trees that can pick up on non-linear interactions. Similarly, **population_density** can reflect traffic conditions and accident risk, even if the correlation appears weak at first glance.
+<br>
+
+On the other hand, I’m planning to drop features that have extremely skewed distributions or small variability, like **is_speed_alert**, **is_power_steering**, **is_central_locking**, and **is_power_door_locks**. Almost every vehicle includes these features, so they won’t help the model differentiate between those who file claims and those who don’t. I am also removing variables like make, model, and steering_type; they are too specific and sparsely represented across the data, which could lead to overfitting. Features like **rear_brakes_type** and **transmission_type** also fall into this category—they don’t offer much variation and are likely already captured by more detailed specs.
+<br>
+
+Lastly, while variables like **fuel_type**, **gear_box**, and **engine_type** bring some variety, they tend to cluster around just a few common categories. Because of that, they often overlap with more descriptive features like **displacement** or **max_power**. To keep things simple and to enhance clarity, I will focus on the variables that provide broader, more continuous understanding and eliminate the overly granular ones. Overall, I’m focused on a set of predictors that emphasize safety, vehicle complexity, and environmental exposure—without weighing the model down with noise.
+<br>
+
+
+<center> <h1>**Methodology**</h1> </center>
+To predict whether a policyholder will file an insurance claim, I structured the problem as a supervised classification task because the outcome variable, is_claim, is binary, meaning it can take only two values. This way lets for the application of various classification algorithms to predict the likelihood of a policyholder filing a claim and enables a thorough analysis of the factors influencing claim behavior. I selected diverse models to handle the specific challenges of insurance claim prediction, balancing interpretability, regularization, flexibility, and predictive power. These include Logistic Regression for baseline predictions, LASSO and Ridge Regression to handle potential multicollinearity in insurance variables, and more complex models like Random Forests and Boosting to capture non-linear relationships between policyholder characteristics and claim likelihood.
+<br>
+
+Logistic Regression serves as a foundational model, offering interpretable and explainable results through its coefficients. It assumes linearity between features and the output, but helps establish a baseline for comparison. LASSO Regression enhances this model by applying L1 regularization. This technique helps prevent overfitting and automatically removes unimportant variables, making it well-suited for high-dimensional datasets with potentially redundant features. Ridge Regression uses L2 regularization, which is appropriate for multicollinearity and balances model complexity with overfitting without excluding predictors.
+<br>
+
+I included tree-based methods to model more complex relationships and non-linear interactions. Random Forests reduce overfitting and offer better accuracy and robustness, particularly useful when variable interactions are present. Boosting methods further enhance predictive performance by sequentially learning from previous errors, adapting them for identifying subtle, complex patterns in the data.
+<br>
+
+I will evaluate each model using accuracy, precision, recall, F1 score, and the AUC-ROC curve to address class imbalance. I will apply K-fold cross-validation for hyperparameter tuning and to ensure model generalizability. I will use backward stepwise selection for feature selection in Logistic Regression, implement regularization in LASSO, and rank variable importance from tree-based models. This multi-model methodology guarantees that I can compare performance across interpretable linear models and more flexible ensemble models
+
+<br>
+<center> <h1>**Results**</h1> </center>
+
+### **Logistic Regression Model**
+
+The logistic regression model provided insights into how different features relate to the likelihood of a policyholder filing a claim, identifying key predictors that significantly influence claim behavior. It highlighted several statistically significant variables, including age_of_car, policy_tenure, population_density, displacement, cylinder, and ncap_rating. Notably, age_of_car had a strong negative coefficient, indicating that newer vehicles are more likely to be involved in claims. In contrast, some predictors, such as airbags, is_esc, and is_tpms, showed no statistical significance.
+<br>
+
+Upon reviewing the model's performance, I realized that relying only on the typical accuracy metric would not provide an accurate evaluation. Even with great accuracy of 93.6% across various thresholds, this figure was somewhat misleading, as the model predominantly predicted non-claims due to the significant class imbalance. To gain a better idea of the model's effectiveness, I experimented with different classification thresholds ranging from 0.1 to 0.9. Throughout this process, I focused on essential metrics such as sensitivity, specificity, precision, recall, F1 score, and AUC to evaluate its true performance.
+<br>
+
+The best trade-off between sensitivity and specificity appeared at a lower threshold of 0.1. At this point, the model's accuracy dropped slightly to 87.3%, but its specificity improved to 11.7% while maintaining a sensitivity of 92.4%. Most importantly, this threshold delivered the highest balanced accuracy (0.521), indicating a better balance between detecting true positives and true negatives. The precision (0.9388) and F1 score (0.9315) were also strongest at this threshold, indicating that the model was more reliable in predicting actual claimants. While the AUC of 0.6121 indicates modest predictive power, it still shows that the model performs better..  
+
+```{r, message=FALSE, echo = FALSE}
+# 1. DATA PREPARATION
+
+
+# Define predictors to keep
+selected_predictors <- c("age_of_car", "policy_tenure", "population_density",
+                         "airbags", "displacement", "cylinder", "ncap_rating",
+                         "is_esc", "is_tpms", "is_parking_camera", "is_brake_assist")
+
+# Stratified sampling
+set.seed(123)
+split_index <- createDataPartition(train$is_claim, p = 0.8, list = FALSE)
+train_split <- train[split_index, ]
+test_split  <- train[-split_index, ]
+
+# Create clean datasets
+train_clean <- train_split[, c("is_claim", selected_predictors)]
+test_clean  <- test_split[, selected_predictors]
+
+# Convert binary features safely
+binary_vars <- c("is_esc", "is_tpms", "is_parking_camera", "is_brake_assist")
+convert_binary <- function(x) ifelse(x == "Yes", 1, ifelse(x == "No", 0, NA))
+train_clean[binary_vars] <- lapply(train_split[binary_vars], convert_binary)
+test_clean[binary_vars]  <- lapply(test_split[binary_vars], convert_binary)
+
+# Convert other variables to numeric
+vars_to_numeric <- c("airbags", "displacement", "cylinder", "ncap_rating")
+convert_clean_numeric <- function(x) suppressWarnings(as.numeric(as.character(x)))
+train_clean[vars_to_numeric] <- lapply(train_clean[vars_to_numeric], convert_clean_numeric)
+test_clean[vars_to_numeric]  <- lapply(test_clean[vars_to_numeric], convert_clean_numeric)
+
+# Convert outcome to factor
+train_clean$is_claim <- as.factor(train_clean$is_claim)
+```
+
+
+```{r, message=FALSE, echo = FALSE}
+# 2. FIT LOGISTIC MODEL
+
+
+logit_model <- glm(is_claim ~ ., data = train_clean, family = "binomial")
+
+# Predict probabilities on test set
+logit_probs <- predict(logit_model, newdata = test_clean, type = "response")
+
+# Remove NAs
+valid_idx <- !is.na(logit_probs)
+logit_probs <- logit_probs[valid_idx]
+test_actual <- factor(test_split$is_claim[valid_idx], levels = c(0, 1))
+
+summary(logit_model)
+
+```
+
+
+```{r, message=FALSE, echo = FALSE}
+# 3. THRESHOLD LOOP
+
+
+thresholds <- seq(0.1, 0.9, by = 0.1)
+results_list <- list()
+
+for (t in thresholds) {
+  logit_pred <- factor(ifelse(logit_probs > t, 1, 0), levels = c(0, 1))
+  cm <- confusionMatrix(logit_pred, test_actual)
+  
+  acc <- cm$overall["Accuracy"]
+  recall <- cm$byClass["Sensitivity"]
+  spec <- cm$byClass["Specificity"]
+  prec <- cm$byClass["Pos Pred Value"]
+  f1 <- 2 * (prec * recall) / (prec + recall)
+  bal_acc <- cm$byClass["Balanced Accuracy"]
+  auc_val <- auc(test_actual, logit_probs)
+  
+  results_list[[as.character(t)]] <- c(
+    Threshold = t,
+    Accuracy = acc,
+    Recall = recall,
+    Specificity = spec,
+    Precision = prec,
+    F1 = f1,
+    Balanced_Accuracy = bal_acc,
+    AUC = auc_val
+  )
+}
+
+# Convert list to data frame and view
+threshold_summary <- do.call(rbind, results_list) %>%
+  as.data.frame() %>%
+  mutate(across(everything(), as.numeric),
+         across(everything(), round, 4))
+
+# View summary table
+print(threshold_summary)
+
+```
+
+
+```{r, message=FALSE, echo = FALSE}
+# 4. CONFUSION MATRIX AT BEST THRESHOLD
+
+
+best_threshold <- threshold_summary$Threshold[which.max(threshold_summary$Balanced_Accuracy)]
+cat("Best threshold based on Balanced Accuracy:", best_threshold, "\n")
+
+logit_pred_best <- factor(ifelse(logit_probs > best_threshold, 1, 0), levels = c(0, 1))
+conf_matrix_best <- confusionMatrix(logit_pred_best, test_actual)
+print(conf_matrix_best)
+```
+
+
+```{r, message=FALSE, echo = FALSE}
+# 5. PLOT METRICS (excluding AUC)
+
+# Rename columns to simplify plotting
+colnames(threshold_summary) <- c("Threshold", "Accuracy", "Sensitivity", "Specificity", "Balanced_Accuracy", "AUC")
+
+# Reshape for plotting
+melted <- melt(threshold_summary[, c("Threshold", "Accuracy", "Sensitivity", "Specificity", "Balanced_Accuracy")], 
+               id.vars = "Threshold")
+
+# Plot
+ggplot(melted, aes(x = Threshold, y = value, color = variable)) +
+  geom_line(size = 1.1) +
+  geom_point(size = 2) +
+  labs(title = "Logistic Regression Metrics Across Thresholds",
+       y = "Metric Value", color = "Metric") +
+  theme_minimal()
+```
+
+
+```{r, message=FALSE, echo = FALSE}
+# 6. ROC Curve and AUC
+
+
+roc_obj <- roc(test_actual, logit_probs, quiet = TRUE)
+plot(roc_obj, main = "Logistic Regression ROC Curve", col = "blue")
+text(x = 0.6, y = 0.2, labels = paste("AUC =", round(auc(roc_obj), 4)), cex = 1.2)
+```
+<br>
+
+### **Logistic Regression with Backward Stepwise Selected Features**
+
+Using backward stepwise selection, I refined the logistic regression model to include only the most relevant predictors. This reduced the model's complexity while preserving key information. I then evaluated its performance across different classification thresholds from 0.1 to 0.9. The best-performing threshold was 0.1, where the model achieved a balanced accuracy of 52.0%, a recall of 92.4%, and a precision of 9.4%, into an F1 Score of 10.3%. While the accuracy was slightly lower at this threshold (87.3%) compared to higher thresholds (which consistently reached 93.6%), this setting offered a better trade-off between detecting actual claimants and avoiding false alarms.
+```{r, message=FALSE, echo = FALSE}
+# 1. Backward stepwise selection
+step_model <- step(glm(is_claim ~ ., data = train_clean, family = binomial),
+                   direction = "backward", trace = 0)
+
+# 2. Predict probabilities using the selected model
+step_probs <- predict(step_model, newdata = test_clean, type = "response")
+test_actual <- factor(test_split$is_claim, levels = c(0, 1))  # ensure factor
+
+# 3. Define threshold 
+thresholds <- seq(0.1, 0.9, by = 0.1)
+results_list <- list()
+
+# 4. Evaluate performance across thresholds
+for (t in thresholds) {
+  step_pred <- factor(ifelse(step_probs > t, 1, 0), levels = c(0, 1))
+  cm <- confusionMatrix(step_pred, test_actual, positive = "1")
+
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- cm$byClass["Sensitivity"]
+
+  # Avoid NaN from 0/0 by checking denominator
+  if (is.na(precision) || is.na(recall) || (precision + recall == 0)) {
+    f1 <- 0
+  } else {
+    f1 <- 2 * ((precision * recall) / (precision + recall))
+  }
+
+  results_list[[as.character(t)]] <- c(
+    Threshold = t,
+    Accuracy = cm$overall["Accuracy"],
+    Recall = recall,
+    Specificity = cm$byClass["Specificity"],
+    Precision = precision,
+    F1 = f1,
+    Balanced_Accuracy = cm$byClass["Balanced Accuracy"],
+    AUC = auc(test_actual, step_probs)
+  )
+}
+
+# 5. Summary table
+stepwise_threshold_summary <- do.call(rbind, results_list) %>%
+  as.data.frame() %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), round, 4))
+
+# 6. Final results
+print(stepwise_threshold_summary)
+
+# 7. Confusion Matrix at best threshold based on Balanced Accuracy
+best_row <- stepwise_threshold_summary[which.max(stepwise_threshold_summary$Balanced_Accuracy), ]
+best_threshold <- best_row$Threshold
+
+cat("Best threshold based on Balanced Accuracy:", best_threshold, "\n")
+final_pred <- factor(ifelse(step_probs > best_threshold, 1, 0), levels = c(0, 1))
+conf_matrix <- confusionMatrix(final_pred, test_actual)
+print(conf_matrix)
+
+# 8. ROC Curve
+roc_obj <- roc(test_actual, step_probs, quiet = TRUE)
+plot(roc_obj, main = paste("ROC Curve (Threshold =", best_threshold, ")"), col = "darkorange")
+text(0.6, 0.2, labels = paste("AUC =", round(auc(roc_obj), 4)), col = "black", cex = 1.2)
+
+# View the formula of the final selected model
+#final_formula <- formula(step_model)
+#print(final_formula)
+
+```
+The logistic regression model using backward stepwise selection below identifies several statistically significant predictors of whether a policyholder will file a claim. Policy_tenure has a highly significant and positive coefficient, indicating that long-standing customers are more likely to file a claim. This may seem counterintuitive but could reflect factors such as increased vehicle usage or a greater likelihood of claim awareness over time.
+<br>
+
+Age_of_car and population_density both have significant negative coefficients, suggesting that policyholders with newer vehicles and those living in more densely populated areas are less likely to file claims. The last could be due to urban drivers potentially covering shorter distances or having better access to public transport.
+<br>
+
+In terms of vehicle specifications, displacement is negatively associated with claims, meaning vehicles with larger engine displacement are slightly less likely to be involved in claims. Cylinder count, on the other hand, has a positive and statistically significant coefficient, implying that cars with more cylinders may possess a higher risk, perhaps due to being more performance-oriented or driven differently. Other variables like ncap_rating, airbags, and is_brake_assist demonstrate weaker significance levels but may still provide predictive value and should be considered alongside other features or tested in further models.
+```{r, message=FALSE, echo = FALSE}
+# View coefficient estimates and p-values
+summary(step_model)
+
+```
+
+<br>
+
+### **LASSO Logistic Regression**
+Based on the outputs from the LASSO regression model below, similar performance patterns emerge as observed in the previous logistic regression models. The model's AUC of 0.6114 indicates that it performs better than random guessing when distinguishing between claimants and non-claimants. At the optimal threshold of 0.1, LASSO achieved an accuracy of 88.2%, sensitivity of 93.5%, and specificity of 11.1%. The high sensitivity reveals that the model effectively identifies most non-claimants, who dominate the dataset, but struggles to identify true claimants (specificity) due to its low performance.
+<br>
+
+The precision and F1 score at this threshold—0.9390 and 0.1074 respectively—indicate that while the model makes a meaningful number of correct positive predictions, the low F1 score reflects the difficulties presented by the imbalance in class representation. At higher thresholds (0.2 and beyond), LASSO fails to identify any claimants, resulting in NaN values for precision and F1. This outcome stems from the model predicts all observations as non-claimants As with logistic regression, threshold adjustment was essential to enhance the model’s usefulness, especially in identifying the minority class. LASSO’s advantage is its automatic feature selection via regularization, which controls overfitting and improves generalizability, but it still struggles with class imbalance.
+
+```{r, message=FALSE, echo = FALSE}
+
+# 1. 
+x_train <- model.matrix(is_claim ~ ., data = train_clean)[, -1]
+y_train <- as.numeric(as.character(train_clean$is_claim))
+x_test  <- model.matrix(~ ., data = test_clean)[, -1]
+test_actual <- factor(test_split$is_claim, levels = c(0, 1))
+
+# 2. Cross-validation for lambda
+set.seed(123)
+cv_lasso <- cv.glmnet(x_train, y_train, family = "binomial", alpha = 1)
+best_lambda <- cv_lasso$lambda.min
+
+# 3. 
+lasso_model <- glmnet(x_train, y_train, family = "binomial", alpha = 1, lambda = best_lambda)
+lasso_probs <- predict(lasso_model, newx = x_test, type = "response")
+
+# 4. Threshold evaluation
+thresholds <- seq(0.1, 0.9, by = 0.1)
+results_list <- list()
+
+for (t in thresholds) {
+  lasso_pred <- factor(ifelse(lasso_probs > t, 1, 0), levels = c(0, 1))
+  cm <- confusionMatrix(lasso_pred, test_actual, positive = "1")
+
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- cm$byClass["Sensitivity"]
+  f1 <- ifelse((precision + recall) == 0, NA, 2 * ((precision * recall) / (precision + recall)))
+
+  results_list[[as.character(t)]] <- c(
+    Threshold = t,
+    Accuracy = cm$overall["Accuracy"],
+    Recall = recall,
+    Specificity = cm$byClass["Specificity"],
+    Precision = precision,
+    F1 = f1,
+    Balanced_Accuracy = cm$byClass["Balanced Accuracy"],
+    AUC = auc(test_actual, as.numeric(lasso_probs))
+  )
+}
+
+# 5. Summary Table
+lasso_threshold_summary <- do.call(rbind, results_list) %>%
+  as.data.frame() %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), round, 4))
+
+print(lasso_threshold_summary)
+
+# 6. Confusion Matrix at Best Threshold
+best_row <- lasso_threshold_summary[which.max(lasso_threshold_summary$Balanced_Accuracy), ]
+best_threshold <- best_row$Threshold
+cat("Best threshold based on Balanced Accuracy:", best_threshold, "\n")
+
+final_pred <- factor(ifelse(lasso_probs > best_threshold, 1, 0), levels = c(0, 1))
+conf_matrix <- confusionMatrix(final_pred, test_actual)
+print(conf_matrix)
+
+# 7. ROC Curve
+roc_obj <- roc(test_actual, as.numeric(lasso_probs), quiet = TRUE)
+plot(roc_obj, main = paste("LASSO Regression ROC Curve (Threshold =", best_threshold, ")"), col = "darkgreen")
+text(0.6, 0.2, labels = paste("AUC =", round(auc(roc_obj), 4)), col = "black", cex = 1.2)
+
+```
+<br>
+
+
+### **Ridge Regression with Backward Stepwise Selected Features**
+The Ridge Regression model, evaluated at a classification threshold of 0.1, performs reasonably well given the class imbalance in the dataset, where only about 6% of policyholders filed a claim. The model's overall accuracy of 88.15% is largely due to its strong ability to identify non-claimants. This is evident in the high sensitivity (93.44%), showing that the model correctly flags most non-claim cases. However, its specificity remains low at 10.81%, meaning it struggles to correctly identify non-claimants. Despite this, the precision is high (93.88%), indicating that when the model predicts a claim, it is likely to be correct. The balanced accuracy of 52.13% and an AUC of 0.6111 suggest that the model performs moderately well.
+
+<br>
+
+```{r, message=FALSE, echo = FALSE}
+# 1. Use only the features selected by backward stepwise
+selected_vars <- c("age_of_car", "policy_tenure", "population_density",
+                   "airbags", "displacement", "cylinder", "ncap_rating", "is_brake_assist")
+
+# 2. Create matrices
+x_train_ridge <- model.matrix(as.formula(paste("~", paste(selected_vars, collapse = " + "))),
+                              data = train_clean)[, -1]
+y_train_ridge <- as.numeric(as.character(train_clean$is_claim))
+x_test_ridge <- model.matrix(as.formula(paste("~", paste(selected_vars, collapse = " + "))),
+                             data = test_clean)[, -1]
+test_actual <- factor(test_split$is_claim, levels = c(0, 1))
+
+# 3. Fit Ridge Regression with Cross-Validation
+set.seed(123)
+cv_ridge <- cv.glmnet(x_train_ridge, y_train_ridge, family = "binomial", alpha = 0)
+best_lambda_ridge <- cv_ridge$lambda.min
+
+# 4. Final model and probability predictions
+ridge_model <- glmnet(x_train_ridge, y_train_ridge, family = "binomial", alpha = 0, lambda = best_lambda_ridge)
+ridge_probs <- as.numeric(predict(ridge_model, newx = x_test_ridge, type = "response")) # Had an error, so I used as.numeric
+
+# 5. Threshold tuning loop
+thresholds <- seq(0.1, 0.9, by = 0.1)
+results_list <- list()
+
+for (t in thresholds) {
+  ridge_pred <- factor(ifelse(ridge_probs > t, 1, 0), levels = c(0, 1))
+  cm <- confusionMatrix(ridge_pred, test_actual, positive = "1")
+
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- cm$byClass["Sensitivity"]
+  f1 <- ifelse(is.na(precision) | is.na(recall), NA, 2 * ((precision * recall) / (precision + recall)))
+
+  results_list[[as.character(t)]] <- c(
+    Threshold = t,
+    Accuracy = cm$overall["Accuracy"],
+    Recall = recall,
+    Specificity = cm$byClass["Specificity"],
+    Precision = precision,
+    F1 = f1,
+    Balanced_Accuracy = cm$byClass["Balanced Accuracy"],
+    AUC = auc(test_actual, ridge_probs)
+  )
+}
+
+# 6. Combine and format results
+ridge_threshold_summary <- do.call(rbind, results_list) %>%
+  as.data.frame() %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), round, 4))
+
+# 7. Best threshold evaluation
+best_row <- ridge_threshold_summary[which.max(ridge_threshold_summary$Balanced_Accuracy), ]
+best_threshold <- best_row$Threshold
+
+cat("Best threshold based on Balanced Accuracy:", best_threshold, "\n")
+
+final_pred <- factor(ifelse(ridge_probs > best_threshold, 1, 0), levels = c(0, 1))
+conf_matrix <- confusionMatrix(final_pred, test_actual)
+print(conf_matrix)
+
+# 8. ROC Curve
+roc_obj <- roc(test_actual, ridge_probs, quiet = TRUE)
+plot(roc_obj, main = paste("Ridge Regression ROC Curve (Threshold =", best_threshold, ")"), col = "purple")
+text(x = 0.6, y = 0.2, labels = paste("AUC =", round(auc(roc_obj), 4)), col = "black", cex = 1.2)
+
+```
+<br>
+
+
+### **Random Forest**
+Despite achieving a high overall accuracy of 93.3%, the Random Forest model struggles to detect actual claims due to its low sensitivity. With a sensitivity of just 0.0067, the model correctly identified fewer than 1% of claimants. On the other hand, the specificity was 0.996, reflecting strong performance in identifying non-claimants. However, due to the imbalance in the dataset, this leads to a distorted picture of performance. The balanced accuracy, which averages sensitivity and specificity, was only 0.501, underscoring the model’s difficulty in handling the minority class.
+<br>
+
+The AUC of 0.511 further supports this finding, indicating the model’s inability to separate claimants from non-claimants. Additionally, at higher thresholds, most precision and F1 score values returned as NaN, which occurs when no positive cases are predicted rendering those metrics undefined. These outcomes emphasize that while the model appears effective in aggregate terms, it performs poorly when the focus shifts to detecting actual claims.
+```{r, message=FALSE, echo = FALSE}
+
+# 1. Fit Random Forest model
+set.seed(123)
+rf_model <- randomForest(as.factor(is_claim) ~ ., data = train_clean, ntree = 500)
+
+# 2. Predict probabilities on test set
+rf_probs <- predict(rf_model, newdata = test_clean, type = "prob")[, 2]
+test_actual <- factor(test_split$is_claim, levels = c(0, 1))
+
+# 3. Evaluate across thresholds
+thresholds <- seq(0.1, 0.9, by = 0.1)
+results_list <- list()
+
+for (t in thresholds) {
+  rf_pred <- factor(ifelse(rf_probs > t, 1, 0), levels = c(0, 1))
+  cm <- confusionMatrix(rf_pred, test_actual, positive = "1")
+  
+  precision <- cm$byClass["Pos Pred Value"]
+  recall <- cm$byClass["Sensitivity"]
+  f1 <- ifelse((precision + recall) == 0, NA, 2 * ((precision * recall) / (precision + recall)))
+  
+  results_list[[as.character(t)]] <- c(
+    Threshold = t,
+    Accuracy = cm$overall["Accuracy"],
+    Recall = recall,
+    Specificity = cm$byClass["Specificity"],
+    Precision = precision,
+    F1 = f1,
+    Balanced_Accuracy = cm$byClass["Balanced Accuracy"],
+    AUC = auc(test_actual, rf_probs)
+  )
+}
+
+# 4. Summary table
+rf_results <- do.call(rbind, results_list) %>%
+  as.data.frame() %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(across(everything(), round, 4))
+
+print(rf_results)
+
+# 5. Confusion Matrix
+best_threshold <- rf_results$Threshold[which.max(rf_results$Balanced_Accuracy)]
+cat("Best threshold based on Balanced Accuracy:", best_threshold, "\n")
+
+rf_final_pred <- factor(ifelse(rf_probs > best_threshold, 1, 0), levels = c(0, 1))
+conf_matrix <- confusionMatrix(rf_final_pred, test_actual, positive = "1")
+print(conf_matrix)
+
+# 6. ROC Curve
+roc_obj <- roc(test_actual, rf_probs, quiet = TRUE)
+plot(roc_obj, main = paste("Random Forest ROC Curve (Threshold =", best_threshold, ")"), col = "darkgreen")
+text(0.6, 0.2, labels = paste("AUC =", round(auc(roc_obj), 4)), col = "black", cex = 1.2)
+
+```
+
+A variable importance plot was developed to provide deeper insights into each predictor's impact. According to the Mean Decrease in Gini, policy_tenure stood out as the most significant variable, followed by age_of_car and population_density. These findings confirm earlier models, strengthening the hypothesis that experience, vehicle age, and regional factors significantly influence claim risk.
+```{r, message=FALSE, echo = FALSE}
+library(randomForest)
+importance(rf_model)
+varImpPlot(rf_model, main = "Variable Importance - Random Forest")
+
+```
+
+
+<br>
+<br>
+
+<center> <h1>**Conclusions**</h1> </center>
+Across multiple models, policy_tenure, age_of_car, and population_density consistently emerged as top predictors of claim likelihood. Logistic regression and LASSO performed well, achieving high sensitivity and balanced accuracy when thresholds were optimized. However, tree-based models like Random Forest underperformed in this imbalanced classification task, likely due to difficulty identifying claimants. These results highlight the importance of threshold tuning, feature selection, and choosing evaluation metrics, as they significantly impacted the model's ability to accurately predict a policyholder would claim. While boosting was not implemented due to time constraints, it remains a potential path for future work. Given its ability to sequentially learn from misclassified observations, it may offer modest improvements in detecting claimants. However, due to the extreme class imbalance in the data, even Boosting may face challenges in significantly improving prediction accuracy without additional resampling or cost-sensitive adjustments.
+<br>
+<br>
+
+<center> <h1>**Discussion**</h1> </center>
+
+This project presented a combination of challenges and learning experinces. One of the most difficult aspects was the data preparation, especially the challenges encountered in encoding and factoring certain variables. Many features initially returned NaN values during modeling, which led to days of troubleshooting. In the end, I restarted the process entirely, which was necessary to address the persistent issues and ultimately helped me clean and structure the data more effectively. Additionally, understanding the automotive context of many variables proved time consuming. I spent significant time researching what terms like displacement, ncap_rating, and cylinder meant and how they related to vehicle safety or performance.
+<br>
+
+I enjoyed validating my model outputs. At one point, I worried that I had misapplied modeling techniques, but through exploration and evaluation, I realized that the real challenge stemmed from the class imbalance in the dataset—not a modeling error. This deepened my appreciation for metrics like recall, F1 score, and balanced accuracy. Given more time, I would have explored more advanced ensemble techniques like XGBoost and Gradient Boosting, or compared results with a Support Vector Machine to determine if these methods could handle the class imbalance more effectively.
+
+<br>
+
+<center> <h1>**References**</h1> </center>
+- https://www.kaggle.com/datasets/ifteshanajnin/carinsuranceclaimprediction-classification
+- https://www.analyticsvidhya.com/datahack/contest/dataverse/
